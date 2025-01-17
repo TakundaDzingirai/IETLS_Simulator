@@ -6,6 +6,8 @@
     "@google-cloud/speech": "^6.7.0",
     "axios": "^1.7.9",
     "cra-template": "1.2.0",
+    "dotenv": "^16.4.7",
+    "openai": "^4.79.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-pdf": "^9.2.1",
