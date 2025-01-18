@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 require('dotenv').config(); // Load environment variables
 
 // Validate Environment Variables
@@ -6,21 +7,31 @@ if (!process.env.GOOGLE_CLOUD_KEY) {
   throw new Error('Missing GOOGLE_CLOUD_KEY in environment variables');
 }
 
-// Base URL for the Natural Language API
-const API_URL = 'https://language.googleapis.com/v1/documents:analyzeSyntax';
+if (!process.env.GEMINI_API_KEY) {
+  throw new Error('Missing GEMINI_API_KEY in environment variables');
+}
+
+// Initialize Generative AI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+// Base URL for Google Natural Language API
+const GOOGLE_API_URL = 'https://language.googleapis.com/v1/documents:analyzeSyntax';
 
 /**
  * Generate feedback for a specific IELTS test part
  * @param {string} part - The part of the IELTS test (e.g., 'part1', 'part2', 'part3')
  * @param {string} response - The user's spoken response
+ * @param {string} original - (Optional) The intended sentence for pronunciation comparison
  * @returns {Promise<Object>} - Feedback with scores, suggestions, and corrections
  */
-async function generateTestPartFeedback(part, response) {
+async function generateTestPartFeedback(part, response, original = '') {
   try {
     if (!response || !response.trim()) {
       throw new Error('Response is empty or invalid.');
     }
 
+    // Step 1: Use Google Natural Language API for token analysis
     const document = {
       document: {
         type: 'PLAIN_TEXT',
@@ -29,19 +40,42 @@ async function generateTestPartFeedback(part, response) {
       encodingType: 'UTF8',
     };
 
-    const { data } = await axios.post(`${API_URL}?key=${process.env.GOOGLE_CLOUD_KEY}`, document, {
+    const { data: googleData } = await axios.post(`${GOOGLE_API_URL}?key=${process.env.GOOGLE_CLOUD_KEY}`, document, {
       headers: {
         'Content-Type': 'application/json',
       },
     });
 
-    // Parse tokens and perform analysis
-    const tokens = data.tokens.map(token => ({
+    const tokens = googleData.tokens.map(token => ({
       text: token.text.content,
       partOfSpeech: token.partOfSpeech.tag,
     }));
 
-    // Enhanced scoring logic
+    // Step 2: Use Generative AI for pronunciation feedback
+    let pronunciationFeedback = '';
+    console.log(`original: ${original}`)
+    if (original) {
+      const prompt = `I tried to say: "${response}", but the intended sentence was: "${original}". Provide feedback on pronunciation differences and suggestions. Make it short, ignore punctuation, and focus on helping me pronounce each word correctly.`;
+
+      try {
+        console.log("Trying to gemini Ai...");
+        const result = await model.generateContent(prompt);
+      
+        // Extract pronunciation feedback
+        const candidates = result.response?.candidates || [];
+        if (candidates.length > 0) {
+          pronunciationFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
+        }
+      
+        console.log(`feedbackObject: ${JSON.stringify(result.response, null, 2)}`);
+        console.log(`pronunciationFeedback: ${pronunciationFeedback}`);
+      } catch (error) {
+        console.warn('Generative AI failed to provide pronunciation feedback:', error.message);
+      }
+      
+    }
+
+    // Step 3: Scoring logic based on tokens
     const wordCount = response.split(' ').length;
     const sentenceCount = response.split(/[.!?]/).filter(Boolean).length;
     const avgSentenceLength = wordCount / sentenceCount || 1;
@@ -50,7 +84,7 @@ async function generateTestPartFeedback(part, response) {
       fluency: Math.min(avgSentenceLength / 15 * 9, 9), // Longer sentences may indicate better fluency
       grammar: 8 - (tokens.filter(t => t.partOfSpeech === 'X').length / wordCount) * 8, // Penalize unclassified words
       vocabulary: 6 + (tokens.filter(t => ['ADJ', 'ADV'].includes(t.partOfSpeech)).length / wordCount) * 3, // Reward descriptive words
-      pronunciation: 7.5, // Placeholder score (add a pronunciation analysis if needed)
+      pronunciation: pronunciationFeedback ? 7.5 : 7, // Adjust based on Generative AI feedback
     };
 
     // Generate feedback and corrections
@@ -74,11 +108,6 @@ async function generateTestPartFeedback(part, response) {
       if (token.partOfSpeech === 'X') {
         corrections.push(`The word "${token.text}" might be incorrect or unclear.`);
       }
-
-      // Look for inappropriate use of adjectives
-      if (token.partOfSpeech === 'ADJ' && nextToken && nextToken.partOfSpeech === 'NOUN' && nextToken.text.toLowerCase() === 'anyone') {
-        corrections.push(`The phrase "${token.text} ${nextToken.text}" seems grammatically incorrect. Consider revising.`);
-      }
     });
 
     if (scores.fluency < 6) {
@@ -99,8 +128,14 @@ async function generateTestPartFeedback(part, response) {
       feedbackMessages.push('You used a good range of vocabulary. Keep exploring topic-specific terms.');
     }
 
+    if (pronunciationFeedback) {
+      feedbackMessages.push(`Pronunciation feedback: ${pronunciationFeedback}`);
+    } else {
+      feedbackMessages.push('Your pronunciation is clear and easy to understand.');
+    }
+
     return {
-      feedback: 'Text analyzed successfully with Google Natural Language API.',
+      feedback: 'Text analyzed successfully with Google Natural Language API and Generative AI.',
       analysis: {
         tokens,
       },

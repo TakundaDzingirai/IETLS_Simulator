@@ -13,6 +13,13 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(bodyParser.json());
 
+// Debugging Middleware: Log all incoming requests
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log('Request body:', req.body); // Log the body
+  next();
+});
+
 // API Routes
 app.use('/api/speech', speechRoutes);
 app.use('/api/test', testRoutes);
