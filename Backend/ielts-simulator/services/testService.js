@@ -79,6 +79,8 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
     const wordCount = response.split(' ').length;
     const sentenceCount = response.split(/[.!?]/).filter(Boolean).length;
     const avgSentenceLength = wordCount / sentenceCount || 1;
+    const corrections = [];
+
     async function calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData = {}) {
         const fillerWords = ['um', 'uh', 'like', 'you know', 'sort of'];
         const fillerCount = tokens.filter(token => fillerWords.includes(token.text.toLowerCase())).length;
@@ -102,23 +104,42 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
       
         // Send a prompt to Generative AI for additional fluency feedback
         try {
-          const prompt = `Analyze the following response for fluency:\n"${response}"\n\nInclude:\n1. An overall fluency score (0-9).\n2. Feedback on timing and pauses, highlighting where the user could improve their flow, make sure response is short and precise.\n3. Suggestions to improve fluency.`;
-          
+            const prompt = `Analyze the following response for fluency:\n"${response}"\n\nFocus only on providing the following:
+
+            1. A **Fluency Score** on a scale of 0-9 (e.g., "Fluency Score: 7/9").
+            2. Short and actionable **Suggestions to Improve Fluency**, covering:
+            
+               - **Grammar**: Highlight any major sentence structure issues and how to correct them.
+               - **Vocabulary**: Mention imprecise or unclear words and suggest better alternatives.
+               - **Pronunciation**: Provide specific feedback on unclear words and suggest improvements.
+               - **Practice Tips**: Offer brief advice to improve fluency and rhythm.
+            
+            Keep the response concise and structured like this:
+            
+            **Fluency Score:** X/9
+            
+            **Suggestions to Improve Fluency:**
+            * Grammar: ...
+            * Vocabulary: ...
+            * Pronunciation: ...
+            * Practice Tips: ...`;
+            
           console.log("Sending prompt to Generative AI for fluency analysis...");
           const result = await model.generateContent(prompt);
           const candidates = result.response?.candidates || [];
           const fluencyFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
           console.log(`fluencyFeedback: ${fluencyFeedback}`);
+          corrections.push(`AI: ${fluencyFeedback}`)
       
           // Parse the AI's score and feedback
-          const matchScore = fluencyFeedback.match(/fluency score: (\d+(\.\d+)?)/i);
+          const matchScore = fluencyFeedback.match(/Fluency score: (\d+(\.\d+)?)/i);
           const aiFluencyScore = matchScore ? parseFloat(matchScore[1]) : null;
       
           if (aiFluencyScore !== null) {
             fluencyScore = (fluencyScore + aiFluencyScore) / 2; // Combine AI score with logic-based score
           }
       
-          console.log("AI Fluency Feedback:", fluencyFeedback);
+        //   console.log("AI Fluency Feedback:", fluencyFeedback);
         } catch (error) {
           console.warn('Generative AI failed to provide fluency feedback:', error.message);
         }
@@ -137,7 +158,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
 
     // Generate feedback and corrections
     const feedbackMessages = [];
-    const corrections = [];
+    
 
     tokens.forEach((token, index) => {
       const nextToken = tokens[index + 1];
@@ -178,10 +199,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
 
     if (pronunciationFeedback) {
       feedbackMessages.push(`Pronunciation feedback: ${pronunciationFeedback}`);
-    } else {
-      feedbackMessages.push('Your pronunciation is clear and easy to understand.');
-    }
-
+    } 
     return {
       feedback: 'Text analyzed successfully with Google Natural Language API and Generative AI.',
       analysis: {
