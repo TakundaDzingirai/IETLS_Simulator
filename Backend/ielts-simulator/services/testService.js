@@ -25,7 +25,7 @@ const GOOGLE_API_URL = 'https://language.googleapis.com/v1/documents:analyzeSynt
  * @param {string} original - (Optional) The intended sentence for pronunciation comparison
  * @returns {Promise<Object>} - Feedback with scores, suggestions, and corrections
  */
-async function generateTestPartFeedback(part, response, original = '') {
+async function generateTestPartFeedback(part, response, original = '', timingData = {}) {
   try {
     if (!response || !response.trim()) {
       throw new Error('Response is empty or invalid.');
@@ -79,13 +79,61 @@ async function generateTestPartFeedback(part, response, original = '') {
     const wordCount = response.split(' ').length;
     const sentenceCount = response.split(/[.!?]/).filter(Boolean).length;
     const avgSentenceLength = wordCount / sentenceCount || 1;
+    async function calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData = {}) {
+        const fillerWords = ['um', 'uh', 'like', 'you know', 'sort of'];
+        const fillerCount = tokens.filter(token => fillerWords.includes(token.text.toLowerCase())).length;
+      
+        const avgSentenceLength = wordCount / sentenceCount || 1;
+        const sentenceVariety = sentenceCount > 1 ? 1 : 0.5; // Boost fluency if multiple sentences are present
+      
+        // Timing metrics
+        const { totalDuration, pauseDurations = [] } = timingData;
+        const speechRate = totalDuration ? wordCount / (totalDuration / 60) : 0; // Words per minute
+        const avgPauseDuration = pauseDurations.length ? pauseDurations.reduce((a, b) => a + b, 0) / pauseDurations.length : 0;
+        const pausePenalty = avgPauseDuration > 2 ? 1 : 0; // Penalize for long pauses (>2 seconds)
+      
+        // Calculate baseline fluency
+        let fluencyScore = 7; // Start with a baseline
+        fluencyScore += Math.min(avgSentenceLength / 10, 2); // Reward longer sentences up to a cap
+        fluencyScore -= fillerCount * 0.5; // Penalize fillers
+        fluencyScore += sentenceVariety; // Reward variety
+        fluencyScore -= pausePenalty; // Penalize long pauses
+        fluencyScore += speechRate > 100 && speechRate < 160 ? 1 : -1; // Reward optimal speech rate (100-160 WPM)
+      
+        // Send a prompt to Generative AI for additional fluency feedback
+        try {
+          const prompt = `Analyze the following response for fluency:\n"${response}"\n\nInclude:\n1. An overall fluency score (0-9).\n2. Feedback on timing and pauses, highlighting where the user could improve their flow, make sure response is short and precise.\n3. Suggestions to improve fluency.`;
+          
+          console.log("Sending prompt to Generative AI for fluency analysis...");
+          const result = await model.generateContent(prompt);
+          const candidates = result.response?.candidates || [];
+          const fluencyFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
+          console.log(`fluencyFeedback: ${fluencyFeedback}`);
+      
+          // Parse the AI's score and feedback
+          const matchScore = fluencyFeedback.match(/fluency score: (\d+(\.\d+)?)/i);
+          const aiFluencyScore = matchScore ? parseFloat(matchScore[1]) : null;
+      
+          if (aiFluencyScore !== null) {
+            fluencyScore = (fluencyScore + aiFluencyScore) / 2; // Combine AI score with logic-based score
+          }
+      
+          console.log("AI Fluency Feedback:", fluencyFeedback);
+        } catch (error) {
+          console.warn('Generative AI failed to provide fluency feedback:', error.message);
+        }
+      
+        return Math.max(0, Math.min(fluencyScore, 9)); // Ensure the score stays between 0 and 9
+      }
+      
 
-    const scores = {
-      fluency: Math.min(avgSentenceLength / 15 * 9, 9), // Longer sentences may indicate better fluency
-      grammar: 8 - (tokens.filter(t => t.partOfSpeech === 'X').length / wordCount) * 8, // Penalize unclassified words
-      vocabulary: 6 + (tokens.filter(t => ['ADJ', 'ADV'].includes(t.partOfSpeech)).length / wordCount) * 3, // Reward descriptive words
-      pronunciation: pronunciationFeedback ? 7.5 : 7, // Adjust based on Generative AI feedback
-    };
+      const scores = {
+        fluency: await calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData), // Updated fluency logic
+        grammar: 8 - (tokens.filter(t => t.partOfSpeech === 'X').length / wordCount) * 8, // Penalize unclassified words
+        vocabulary: 6 + (tokens.filter(t => ['ADJ', 'ADV'].includes(t.partOfSpeech)).length / wordCount) * 3, // Reward descriptive words
+        pronunciation: pronunciationFeedback ? 7.5 : 7, // Adjust based on Generative AI feedback
+      };
+      
 
     // Generate feedback and corrections
     const feedbackMessages = [];
@@ -110,23 +158,23 @@ async function generateTestPartFeedback(part, response, original = '') {
       }
     });
 
-    if (scores.fluency < 6) {
-      feedbackMessages.push('Try to use longer, more complex sentences to improve fluency.');
-    } else {
-      feedbackMessages.push('Your fluency is strong; continue practicing to maintain this level.');
-    }
+    // if (scores.fluency < 6) {
+    //   feedbackMessages.push('Try to use longer, more complex sentences to improve fluency.');
+    // } else {
+    //   feedbackMessages.push('Your fluency is strong; continue practicing to maintain this level.');
+    // }
 
-    if (scores.grammar < 7) {
-      feedbackMessages.push('Focus on correcting subject-verb agreement and avoiding sentence fragments.');
-    } else {
-      feedbackMessages.push('Your grammar usage is good, with few noticeable errors.');
-    }
+    // if (scores.grammar < 7) {
+    //   feedbackMessages.push('Focus on correcting subject-verb agreement and avoiding sentence fragments.');
+    // } else {
+    //   feedbackMessages.push('Your grammar usage is good, with few noticeable errors.');
+    // }
 
-    if (scores.vocabulary < 7) {
-      feedbackMessages.push('Incorporate more descriptive words, such as adjectives and adverbs, to enhance your response.');
-    } else {
-      feedbackMessages.push('You used a good range of vocabulary. Keep exploring topic-specific terms.');
-    }
+    // if (scores.vocabulary < 7) {
+    //   feedbackMessages.push('Incorporate more descriptive words, such as adjectives and adverbs, to enhance your response.');
+    // } else {
+    //   feedbackMessages.push('You used a good range of vocabulary. Keep exploring topic-specific terms.');
+    // }
 
     if (pronunciationFeedback) {
       feedbackMessages.push(`Pronunciation feedback: ${pronunciationFeedback}`);
