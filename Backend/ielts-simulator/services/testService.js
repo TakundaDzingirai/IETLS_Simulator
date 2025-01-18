@@ -57,9 +57,27 @@ async function generateTestPartFeedback(part, response) {
     const feedbackMessages = [];
     const corrections = [];
 
-    tokens.forEach(token => {
+    tokens.forEach((token, index) => {
+      const nextToken = tokens[index + 1];
+
+      // Check for incorrect pronouns
+      if (token.partOfSpeech === 'PRON' && token.text.toLowerCase() === 'them') {
+        corrections.push(`The pronoun "${token.text}" seems incorrect here. Consider using "their" or another appropriate pronoun.`);
+      }
+
+      // Check for awkward prepositional phrases
+      if (token.partOfSpeech === 'ADP' && nextToken && nextToken.partOfSpeech === 'DET' && nextToken.text.toLowerCase() === 'the') {
+        corrections.push(`The phrase "${token.text} ${nextToken.text}" seems awkward. Consider revising.`);
+      }
+
+      // Identify unclassified or unclear words
       if (token.partOfSpeech === 'X') {
         corrections.push(`The word "${token.text}" might be incorrect or unclear.`);
+      }
+
+      // Look for inappropriate use of adjectives
+      if (token.partOfSpeech === 'ADJ' && nextToken && nextToken.partOfSpeech === 'NOUN' && nextToken.text.toLowerCase() === 'anyone') {
+        corrections.push(`The phrase "${token.text} ${nextToken.text}" seems grammatically incorrect. Consider revising.`);
       }
     });
 
