@@ -1,10 +1,16 @@
 // services/speechService.js - Service Logic for Speech Processing
 
 const { SpeechClient } = require('@google-cloud/speech');
+require('dotenv').config(); // Load environment variables
+
+// Validate Environment Variables
+if (!process.env.GOOGLE_CLOUD_KEY) {
+  throw new Error('Missing GOOGLE_CLOUD_KEY in environment variables');
+}
 
 // Initialize Google Cloud Speech-to-Text Client
 const client = new SpeechClient({
-  keyFilename: 'config/your-key.json', // Replace with your Google Cloud key file path
+  keyFilename: process.env.GOOGLE_CLOUD_KEY, // Load key file path from .env
 });
 
 /**

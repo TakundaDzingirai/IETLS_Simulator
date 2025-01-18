@@ -1,18 +1,19 @@
-// services/testService.js - Service Logic for IELTS Test Feedback
+const axios = require('axios');
+require('dotenv').config(); // Load environment variables
 
-const { Configuration, OpenAIApi } = require('openai');
+// Validate Environment Variables
+if (!process.env.GOOGLE_CLOUD_KEY) {
+  throw new Error('Missing GOOGLE_CLOUD_KEY in environment variables');
+}
 
-// Configure OpenAI API
-const configuration = new Configuration({
-  apiKey: process.env.OPENAI_API_KEY, // Store API key in an environment variable
-});
-const openai = new OpenAIApi(configuration);
+// Base URL for the Natural Language API
+const API_URL = 'https://language.googleapis.com/v1/documents:analyzeSyntax';
 
 /**
  * Generate feedback for a specific IELTS test part
  * @param {string} part - The part of the IELTS test (e.g., 'part1', 'part2', 'part3')
  * @param {string} response - The user's spoken response
- * @returns {Promise<Object>} - Feedback with scores and suggestions
+ * @returns {Promise<Object>} - Feedback with scores, suggestions, and corrections
  */
 async function generateTestPartFeedback(part, response) {
   try {
@@ -20,41 +21,78 @@ async function generateTestPartFeedback(part, response) {
       throw new Error('Response is empty or invalid.');
     }
 
-    // Use OpenAI GPT for grammar and vocabulary feedback
-    const prompt = `
-      Analyze the following response for grammar and coherence:
-      Response: "${response}"
-      
-      Provide:
-      1. A corrected version of the response.
-      2. Detailed feedback on grammar issues and suggestions for improvement.
-    `;
+    const document = {
+      document: {
+        type: 'PLAIN_TEXT',
+        content: response,
+      },
+      encodingType: 'UTF8',
+    };
 
-    const gptResponse = await openai.createCompletion({
-      model: 'text-davinci-003',
-      prompt: prompt,
-      max_tokens: 500,
-      temperature: 0.7,
+    const { data } = await axios.post(`${API_URL}?key=${process.env.GOOGLE_CLOUD_KEY}`, document, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
 
-    const feedbackText = gptResponse.data.choices[0].text.trim();
+    // Parse tokens and perform analysis
+    const tokens = data.tokens.map(token => ({
+      text: token.text.content,
+      partOfSpeech: token.partOfSpeech.tag,
+    }));
 
-    // Example scoring logic (can be refined based on GPT analysis)
+    // Enhanced scoring logic
+    const wordCount = response.split(' ').length;
+    const sentenceCount = response.split(/[.!?]/).filter(Boolean).length;
+    const avgSentenceLength = wordCount / sentenceCount || 1;
+
     const scores = {
-      fluency: Math.min(response.split(' ').length / 10, 9),
-      grammar: Math.random() * 2 + 7, // Replace with dynamic grammar score if possible
-      vocabulary: Math.random() * 2 + 6, // Replace with vocabulary richness analysis
-      pronunciation: Math.random() * 2 + 7, // Placeholder for pronunciation logic
+      fluency: Math.min(avgSentenceLength / 15 * 9, 9), // Longer sentences may indicate better fluency
+      grammar: 8 - (tokens.filter(t => t.partOfSpeech === 'X').length / wordCount) * 8, // Penalize unclassified words
+      vocabulary: 6 + (tokens.filter(t => ['ADJ', 'ADV'].includes(t.partOfSpeech)).length / wordCount) * 3, // Reward descriptive words
+      pronunciation: 7.5, // Placeholder score (add a pronunciation analysis if needed)
     };
+
+    // Generate feedback and corrections
+    const feedbackMessages = [];
+    const corrections = [];
+
+    tokens.forEach(token => {
+      if (token.partOfSpeech === 'X') {
+        corrections.push(`The word "${token.text}" might be incorrect or unclear.`);
+      }
+    });
+
+    if (scores.fluency < 6) {
+      feedbackMessages.push('Try to use longer, more complex sentences to improve fluency.');
+    } else {
+      feedbackMessages.push('Your fluency is strong; continue practicing to maintain this level.');
+    }
+
+    if (scores.grammar < 7) {
+      feedbackMessages.push('Focus on correcting subject-verb agreement and avoiding sentence fragments.');
+    } else {
+      feedbackMessages.push('Your grammar usage is good, with few noticeable errors.');
+    }
+
+    if (scores.vocabulary < 7) {
+      feedbackMessages.push('Incorporate more descriptive words, such as adjectives and adverbs, to enhance your response.');
+    } else {
+      feedbackMessages.push('You used a good range of vocabulary. Keep exploring topic-specific terms.');
+    }
 
     return {
+      feedback: 'Text analyzed successfully with Google Natural Language API.',
+      analysis: {
+        tokens,
+      },
       scores,
-      feedback: feedbackText,
-      overall: (scores.fluency + scores.grammar + scores.vocabulary + scores.pronunciation) / 4,
+      suggestions: feedbackMessages,
+      corrections,
     };
   } catch (error) {
-    console.error('Error generating feedback:', error);
-    throw new Error('Failed to generate feedback for the test part.');
+    console.error('Error generating feedback:', error.response?.data || error.message);
+    throw error;
   }
 }
 
