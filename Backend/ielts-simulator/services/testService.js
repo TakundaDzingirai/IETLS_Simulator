@@ -81,81 +81,123 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
     const avgSentenceLength = wordCount / sentenceCount || 1;
     const corrections = [];
 
-    async function calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData = {}) {
-      const fillerWords = ['um', 'uh', 'like', 'you know', 'sort of'];
-      const fillerCount = tokens.filter(token => fillerWords.includes(token.text.toLowerCase())).length;
+    async function calculateEnhancedFluency(
+      tokens,
+      wordCount,
+      sentenceCount,
+      response,
+      original,
+      timingData = {},
+  
+    ) {
+      // 1. Define expanded filler words, repeated-phrase detection, etc.
+      const fillerWords = ["um", "uh", "like", "you know", "sort of", "actually", "basically", "so..."];
+      const fillerCount = tokens.filter((t) => fillerWords.includes(t.text.toLowerCase())).length;
 
-      const avgSentenceLength = wordCount / sentenceCount || 1;
-      const sentenceVariety = sentenceCount > 1 ? 1 : 0.5; // Boost fluency if multiple sentences are present
+      // 2. Lexical Diversity
+      const uniqueWords = new Set(tokens.map((t) => t.text.toLowerCase()));
+      const uniqueWordsCount = uniqueWords.size;
+      const lexicalDiversity = wordCount > 0 ? uniqueWordsCount / wordCount : 0;
 
-      // Timing metrics
-      const { totalDuration, pauseDurations = [] } = timingData;
-      const speechRate = totalDuration ? wordCount / (totalDuration / 60) : 0; // Words per minute
-      const avgPauseDuration = pauseDurations.length ? pauseDurations.reduce((a, b) => a + b, 0) / pauseDurations.length : 0;
-      const pausePenalty = avgPauseDuration > 2 ? 1 : 0; // Penalize for long pauses (>2 seconds)
+      // 3. Sentence Metrics
+      const avgSentenceLength = wordCount / (sentenceCount || 1);
+      // Reward having more than one sentence, but this is simplistic
+      const sentenceVarietyBonus = sentenceCount > 1 ? 1 : 0;
 
-      // Calculate baseline fluency
-      let fluencyScore = 7; // Start with a baseline
-      fluencyScore += Math.min(avgSentenceLength / 10, 2); // Reward longer sentences up to a cap
-      fluencyScore -= fillerCount * 0.5; // Penalize fillers
-      fluencyScore += sentenceVariety; // Reward variety
-      fluencyScore -= pausePenalty; // Penalize long pauses
-      fluencyScore += speechRate > 100 && speechRate < 160 ? 1 : -1; // Reward optimal speech rate (100-160 WPM)
+      // 4. Timing Metrics
+      const { duration = 0, pauseDuration = 0 } = timingData;
+      // Speech Rate (words per minute)
+      const speechRate = duration ? (wordCount / (duration / 60)) : 0;
+      // Articulation Rate (excludes pause time)
+      const effectiveSpeakingTime = Math.max(duration - pauseDuration, 0.1);
+      const articulationRate = effectiveSpeakingTime
+        ? (wordCount / (effectiveSpeakingTime / 60))
+        : 0;
 
-      // Send a prompt to Generative AI for additional fluency feedback
+      // 5. Pause Metrics (Optional Example)
+      // If you're tracking each pause individually, you might have an array of pause lengths.
+      // For simplicity, assume total pause time > 2 seconds might be considered 'long'.
+      let pausePenalty = 0;
+      const pauseRatio = pauseDuration / duration;
+      // Example thresholds:
+      if (pauseRatio < 0.1) pausePenalty = 0;
+      else if (pauseRatio < 0.2) pausePenalty = 0.5;
+      else if (pauseRatio < 0.3) pausePenalty = 1;
+      else pausePenalty = 2;
+
+      // 6. Calculate Baseline Score
+      // Start with a baseline of 7, then add/subtract
+      let fluencyScore = 7;
+
+      // 6a. Reward or penalize average sentence length (cap at +2)
+      fluencyScore += Math.min(avgSentenceLength / 10, 2);
+
+      // 6b. Penalty for filler words: each filler might subtract 0.25 points, for example
+      fluencyScore -= fillerCount * 0.25;
+
+      // 6c. Sentence variety bonus
+      fluencyScore += sentenceVarietyBonus;
+
+      // 6d. Pause penalty
+      fluencyScore -= pausePenalty;
+
+      // 6e. Speech/Articulation Rate
+      // Suppose we want an optimal articulation rate of ~120–180 WPM for typical conversation
+      if (articulationRate >= 120 && articulationRate <= 180) {
+        fluencyScore += 1;  // Good articulation rate
+      } else {
+        fluencyScore -= 1;  // Too fast/slow
+      }
+
+      // 6f. Lexical Diversity
+      // Reward moderate–high diversity (e.g., 0.4–0.7). 
+      // Exact thresholds depend on your preference.
+      if (lexicalDiversity > 0.4) {
+        fluencyScore += 0.5;
+      }
+      if (lexicalDiversity > 0.6) {
+        fluencyScore += 0.5;  // further bonus for very high diversity
+      }
+
+      // 7. Send a prompt to Generative AI for additional feedback 
+      // (similar to your existing code):
+      let prompt = `
+        Compare my spoken response with the intended (correct) sentence:
+        - **Spoken Response**: "${response}"
+        - **Intended Sentence**: "${original}"
+    
+        1. Grammar Accuracy
+        2. Vocabulary Match
+        3. Fluency Suggestions
+        4. Fluency Score (0-9)
+      `;
+
       try {
-        const prompt = `Compare my spoken response with the intended (correct) sentence:
-              - **Spoken Response**: "${response}"
-              - **Intended Sentence**: "${original}"
-
-              Please analyze the following aspects:
-
-              1. **Grammar Accuracy**: Identify any grammatical errors or structural deviations in my spoken response compared to the intended sentence.
-              2. **Vocabulary Match**: Highlight words in my spoken response that differ from the intended sentence and suggest more accurate alternatives where applicable.
-              3. **Fluency Suggestions**: Provide actionable tips to improve clarity, pace, and natural rhythm in my speech.
-              4. **Fluency Score**: Assign a score between 0 and 9 (e.g., 7) to evaluate overall fluency.
-              Ensure the feedback is concise, clear, and easy to implement.`;
-        if (part != "practice") {
-          prompt = `Analyze the following response for grammar, fluency, and logical relevance to the given question. Provide feedback that includes:
-
-              1. **Clarity and Logic**: Does the response directly and logically answer the question? Highlight any unclear or off-topic points and suggest improvements.
-              2. **Grammar and Vocabulary**: Point out significant grammatical errors or weak vocabulary, and provide corrections or alternatives.
-              3. **Fluency and Natural Rhythm**: Comment on the naturalness and pace of the response, and provide actionable tips to improve clarity, pace, and rhythm.
-              4. **Fluency Score**: Provide a fluency score on a scale of 1 to 9, where 9 indicates excellent fluency.
-
-              Response to analyze: "${response}"
-
-              Questions asked: "${original}"
-
-              Keep the feedback concise, structured, and focused on helping the user improve.`;
-
-        }
-
         console.log("Sending prompt to Generative AI for fluency analysis...");
         const result = await model.generateContent(prompt);
         const candidates = result.response?.candidates || [];
-        const fluencyFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
+        const fluencyFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || "";
         console.log(`fluencyFeedback: ${fluencyFeedback}`);
 
-
-        // Parse the AI's score and feedback
-        const matchScore = fluencyFeedback.match(/Fluency score: (\d+(\.\d+)?)/i);
+        // Attempt to parse an "AI-derived" fluency score from the text
+        const matchScore = fluencyFeedback.match(/Fluency score:\s*(\d+(\.\d+)?)/i);
         const aiFluencyScore = matchScore ? parseFloat(matchScore[1]) : null;
 
         if (aiFluencyScore !== null) {
-          fluencyScore = (fluencyScore + aiFluencyScore) / 2; // Combine AI score with logic-based score
+          // Blend logic-based score with AI-based score
+          fluencyScore = (fluencyScore + aiFluencyScore) / 2;
         }
-        const cleanedFluencyFeedback = fluencyFeedback.replace(/Fluency score: \d+(\.\d+)?/i, "").trim();
 
-        // Push the cleaned feedback into the corrections array
+        const cleanedFluencyFeedback = fluencyFeedback.replace(/Fluency score:\s*\d+(\.\d+)?/i, "").trim();
         corrections.push({ AI: cleanedFluencyFeedback });
 
-        //   console.log("AI Fluency Feedback:", fluencyFeedback);
       } catch (error) {
-        console.warn('Generative AI failed to provide fluency feedback:', error.message);
+        console.warn("Generative AI failed to provide fluency feedback:", error.message);
       }
 
-      return Math.max(0, Math.min(fluencyScore, 9)); // Ensure the score stays between 0 and 9
+      // 8. Ensure final score is between 0 and 9
+      fluencyScore = Math.max(0, Math.min(fluencyScore, 9));
+      return fluencyScore;
     }
 
 
@@ -190,9 +232,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
         tokenFeedback += `The word "${token.text}" might be incorrect or unclear.\n`;
       }
     });
-    if (tokenFeedback) {
-      corrections.push({ Tokens: tokenFeedback });
-    }
+ 
 
 
     if (pronunciationFeedback) {

@@ -16,9 +16,12 @@ const SessionType = ({ sessionType, onBack }) => {
     });
 
     const recognitionRef = useRef(null);
-    const timeoutRef = useRef(null); // Reference for pause detection
-    const lastWordTimeRef = useRef(null); // Track the last word's timestamp
-    const startTimeRef = useRef(null); // Reference for tracking start time
+    const timeoutRef = useRef(null);
+    const lastWordTimeRef = useRef(null);
+    const startTimeRef = useRef(null);
+
+    // *** NEW: Track total paused time
+    const pauseTimeRef = useRef(0);
 
     // Send transcription to backend for feedback
     const sendFeedbackRequest = async (finalTranscript) => {
@@ -28,9 +31,14 @@ const SessionType = ({ sessionType, onBack }) => {
                 {
                     response: finalTranscript,
                     original: original || "n/a",
-                    timingData: { duration: getDuration() }, // Include fluency duration
+                    // Pass both total duration and total paused time
+                    timingData: {
+                        duration: getDuration(),
+                        pauseDuration: pauseTimeRef.current
+                    },
                 }
             );
+            console.log(response.data.feedback);
             setFeedback(response.data.feedback);
         } catch (error) {
             console.error("Error sending transcription to backend:", error);
@@ -47,7 +55,7 @@ const SessionType = ({ sessionType, onBack }) => {
         try {
             const response = await axios.post("http://localhost:5000/api/test/submit", {
                 responses: testResponses,
-                timingData: {}, // Add any timing data if needed
+                timingData: {}, // pass data if needed
             });
             console.log("Test feedback received:", response.data.feedback);
         } catch (error) {
@@ -65,6 +73,7 @@ const SessionType = ({ sessionType, onBack }) => {
             return;
         }
 
+        // Stop any previous recognition instance
         if (recognitionRef.current) {
             recognitionRef.current.stop();
             recognitionRef.current = null;
@@ -75,8 +84,12 @@ const SessionType = ({ sessionType, onBack }) => {
         recognition.interimResults = true;
         recognition.lang = "en-US";
 
+        // Start timers
         startTimeRef.current = new Date();
         lastWordTimeRef.current = new Date();
+
+        // *** NEW: reset paused time at start
+        pauseTimeRef.current = 0;
 
         recognition.onstart = () => {
             setIsRecording(true);
@@ -89,12 +102,6 @@ const SessionType = ({ sessionType, onBack }) => {
             const lastResult = event.results[event.results.length - 1];
             const transcript = lastResult[0].transcript.trim();
 
-            // If you're also using interim results, you could handle them here:
-            // if (!lastResult.isFinal) {
-            //   // Show partial transcription in some "interim" state, if desired
-            //   return;
-            // }
-
             if (lastResult.isFinal) {
                 console.log("infinal state");
                 clearTimeout(timeoutRef.current);
@@ -106,16 +113,20 @@ const SessionType = ({ sessionType, onBack }) => {
                 const punctuation =
                     timeDiff > 1.5 ? "." : timeDiff > 0.8 ? "," : "";
 
-                // Append only the new final chunk (no duplication from older results)
+                // Append only the new final chunk
                 setTranscription((prev) => `${prev.trim()}${punctuation} ${transcript}`);
                 lastWordTimeRef.current = now;
             }
 
-            // Optional: handle the punctuation on a timeout if the user pauses
+            // Handle the punctuation on a timeout if user goes silent for 1.5s
             timeoutRef.current = setTimeout(() => {
                 const now = new Date();
                 const timeDiff = (now - lastWordTimeRef.current) / 1000;
+
                 if (timeDiff > 1.5) {
+                    // *** NEW: add to paused time
+                    pauseTimeRef.current += timeDiff;
+
                     setTranscription((prev) => `${prev.trim()}. `);
                     lastWordTimeRef.current = now;
                 }
@@ -143,21 +154,26 @@ const SessionType = ({ sessionType, onBack }) => {
             recognitionRef.current = null;
         }
 
+        // If in practice mode, send final transcript + timing
         if (sessionType === "practice") {
             sendFeedbackRequest(transcription);
         } else {
             const updateTestResponse = (part) => {
                 setTestResponses((prev) => ({
                     ...prev,
-                    [part]: [...prev[part], transcription],
+                    [part]: [...prev[part], transcription,original],
                 }));
             };
 
             if (currentPart === 1) updateTestResponse("part1");
             else if (currentPart === 2) updateTestResponse("part2");
-            else if (currentPart === 3) updateTestResponse("part3");
+            else if (currentPart === 3) {
+                updateTestResponse("part3");
 
-            setCurrentPart((prevPart) => Math.min(prevPart + 1, 3));
+            }
+
+            setCurrentPart((prevPart) => Math.min(prevPart + 1, 4));
+
         }
 
         setIsRecording(false);
@@ -182,7 +198,7 @@ const SessionType = ({ sessionType, onBack }) => {
             {sessionType !== "practice" && (
                 <div>
                     <p>IELTSPracticeTest or other test instructions here.</p>
-                    <IELTSPracticeTest /* setSection={setSection} */ />
+                    <IELTSPracticeTest setOriginal={setOriginal} />
                 </div>
             )}
 

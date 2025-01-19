@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
-const IELTSPracticeTest = ({ setSection }) => {
+const IELTSPracticeTest = ({ setOriginal }) => {
   const [testQuestions, setTestQuestions] = useState(null);
   const [currentPart, setCurrentPart] = useState(1); // To track which part is being displayed
 
