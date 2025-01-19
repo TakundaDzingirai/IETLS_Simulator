@@ -105,16 +105,31 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
       // Send a prompt to Generative AI for additional fluency feedback
       try {
         const prompt = `Compare my spoken response with the intended (correct) sentence:
-- **Spoken Response**: "${response}"
-- **Intended Sentence**: "${original}"
+              - **Spoken Response**: "${response}"
+              - **Intended Sentence**: "${original}"
 
-Please analyze the following aspects:
+              Please analyze the following aspects:
 
-1. **Grammar Accuracy**: Identify any grammatical errors or structural deviations in my spoken response compared to the intended sentence.
-2. **Vocabulary Match**: Highlight words in my spoken response that differ from the intended sentence and suggest more accurate alternatives where applicable.
-3. **Fluency Suggestions**: Provide actionable tips to improve clarity, pace, and natural rhythm in my speech.
-4. **Fluency Score**: Assign a score between 0 and 9 (e.g., 7) to evaluate overall fluency.
-Ensure the feedback is concise, clear, and easy to implement.`;
+              1. **Grammar Accuracy**: Identify any grammatical errors or structural deviations in my spoken response compared to the intended sentence.
+              2. **Vocabulary Match**: Highlight words in my spoken response that differ from the intended sentence and suggest more accurate alternatives where applicable.
+              3. **Fluency Suggestions**: Provide actionable tips to improve clarity, pace, and natural rhythm in my speech.
+              4. **Fluency Score**: Assign a score between 0 and 9 (e.g., 7) to evaluate overall fluency.
+              Ensure the feedback is concise, clear, and easy to implement.`;
+        if (part != "practice") {
+          prompt = `Analyze the following response for grammar, fluency, and logical relevance to the given question. Provide feedback that includes:
+
+              1. **Clarity and Logic**: Does the response directly and logically answer the question? Highlight any unclear or off-topic points and suggest improvements.
+              2. **Grammar and Vocabulary**: Point out significant grammatical errors or weak vocabulary, and provide corrections or alternatives.
+              3. **Fluency and Natural Rhythm**: Comment on the naturalness and pace of the response, and provide actionable tips to improve clarity, pace, and rhythm.
+              4. **Fluency Score**: Provide a fluency score on a scale of 1 to 9, where 9 indicates excellent fluency.
+
+              Response to analyze: "${response}"
+
+              Questions asked: "${original}"
+
+              Keep the feedback concise, structured, and focused on helping the user improve.`;
+
+        }
 
         console.log("Sending prompt to Generative AI for fluency analysis...");
         const result = await model.generateContent(prompt);
@@ -191,6 +206,7 @@ Ensure the feedback is concise, clear, and easy to implement.`;
       scores,
       suggestions: feedbackMessages,
       corrections,
+      part: part
     };
   } catch (error) {
     console.error('Error generating feedback:', error.response?.data || error.message);

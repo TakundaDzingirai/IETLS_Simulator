@@ -1,166 +1,217 @@
 import React, { useState } from "react";
-import { createClient } from "@deepgram/sdk";
-import SentenceReader from "./RandomiseQuest";
+import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";  // Import LiveTranscriptionEvents
+import IELTSPracticeTest from "./IELTSPracticeTest";
 import axios from "axios";
+import RandomiseQuest from "./RandomiseQuest";
+
 const deepgramApiKey = import.meta.env.VITE_DEEPGRAM_API_KEY;
+const deepgram = createClient(deepgramApiKey); // Initialize once at top level
 
 const SessionComponent = ({ sessionType, onBack }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [transcription, setTranscription] = useState("");
   const [microphone, setMicrophone] = useState(null);
   const [socket, setSocket] = useState(null);
-  const [aiFeedback, setFeedback] = useState(null); // Set to null initially
-  const [original, setOriginal] = useState("")
 
-  // Initialize Deepgram SDK
+  // For practice feedback
+  const [aiFeedback, setFeedback] = useState(null);
+  const [original, setOriginal] = useState("");
 
+  // For test responses
+  const [testResponses, setTestResponses] = useState({
+    part1: [],
+    part2: [],
+    part3: [],
+  });
+  const [currentPart, setCurrentPart] = useState(1);
 
-  const deepgram = createClient(deepgramApiKey); // Replace with your API key
+  // Count how many times we have recorded in practice mode
+  const [recordCount, setRecordCount] = useState(0);
 
+  // ==========================================================
+  // 1. Helper function to get the microphone (MediaRecorder)
+  // ==========================================================
   const getMicrophone = async () => {
-    const userMedia = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-    });
-
+    const userMedia = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mimeType = "audio/webm;codecs=opus";
     if (MediaRecorder.isTypeSupported(mimeType)) {
-      console.log(`Using MIME type: ${mimeType}`);
       return new MediaRecorder(userMedia, { mimeType });
     } else {
-      console.warn(`MIME type ${mimeType} not supported, falling back to default.`);
-      return new MediaRecorder(userMedia); // Fallback to default MIME type
+      return new MediaRecorder(userMedia); // fallback
     }
   };
 
-  const sendFeedbackRequest = async (transcription) => {
+  // =============================================
+  // 2. Send transcription to backend for feedback
+  // =============================================
+  const sendFeedbackRequest = async (finalTranscript) => {
     try {
-      console.log("Sending transcription to backend...");
-      const response = await axios.post("http://localhost:5000/api/practice/feedback", {
-        response: transcription,
-        original: original ? original : "n/a", // Reference sentence for comparison
-        timingData: {}, // Include timing data if applicable
-      });
-
-      // Extract data from response
-      const { analysis, scores, corrections, feedback, suggestions } = response.data.feedback;
-      // console.log(`Analysis:${analysis}`);
-      // console.log(`Scores:${scores}`);
-      // console.log(`Corrections:${corrections[0]}`);
-      // console.log(`Feedback:${feedback}}`);
-      // console.log(`Suggetions:${suggestions}`);
-      const feed = response.data.feedback;
-
-
-      setFeedback(feed);
-
-      console.log("Feedback received:", feed);
+      const response = await axios.post(
+        "http://localhost:5000/api/practice/feedback",
+        {
+          response: finalTranscript,
+          original: original || "n/a",
+          timingData: {}, // if you have any
+        }
+      );
+      setFeedback(response.data.feedback);
     } catch (error) {
-      console.error("Error sending transcription to backend:", error.message);
+      console.error("Error sending transcription to backend:", error);
       setFeedback("Failed to retrieve feedback. Please try again.");
     }
   };
 
+  // ==================================
+  // 3. Submit all test responses
+  // ==================================
+  const submitTestResponses = async () => {
+    try {
+      console.log("Submitting test responses:", testResponses);
+      const response = await axios.post("http://localhost:5000/api/test/submit", {
+        responses: testResponses,
+        timingData: {},
+      });
+      console.log("Test feedback received:", response.data.feedback);
+      // setFeedback(response.data.feedback) if you want
+    } catch (error) {
+      console.error("Error submitting test:", error);
+      setFeedback("Failed to submit test. Please try again.");
+    }
+  };
 
+  // ===================================
+  // 4. Start Recording
+  // ===================================
   const handleStartRecording = async () => {
     try {
+      if (socket) {
+        console.log("Closing previous WebSocket...");
+        socket.requestClose();
+      }
+
       console.log("Connecting to Deepgram WebSocket...");
       const dgSocket = deepgram.listen.live({ model: "nova", punctuate: true });
 
-      // WebSocket Event Listeners
-      dgSocket.on("open", () => {
-        console.log("Connected to Deepgram WebSocket");
-      });
+      let tempTranscription = "";
 
-      let tempTranscription = ""; // Temporary local variable for managing transcription
+      // Using LiveTranscriptionEvents for event listeners
+      dgSocket.on(LiveTranscriptionEvents.Open, () =>
+        console.log("Connected to Deepgram WebSocket")
+      );
 
-      dgSocket.on("Results", (data) => {
-        if (
-          data.channel &&
-          data.channel.alternatives &&
-          data.channel.alternatives.length > 0
-        ) {
+      dgSocket.on(LiveTranscriptionEvents.Transcript, (data) => {
+        if (data.channel && data.channel.alternatives?.length > 0) {
           const transcript = data.channel.alternatives[0]?.transcript || "";
-
           if (transcript) {
-            console.log(`Transcript: ${transcript}`);
-
-            // Update React state for real-time transcription display
-            setTranscription((prev) => `${prev} ${transcript}`); // Append new transcript
-
-            // Append to the temporary transcription
+            console.log("Transcript:", transcript);
             tempTranscription += ` ${transcript}`;
-
-            // Handle final transcription
-            if (data.is_final) {
-              console.log("Final transcription:", tempTranscription.trim());
-
-              // Send final transcription to the backend for feedback
-
-              sendFeedbackRequest(tempTranscription.trim());
-              tempTranscription = ""; // Reset temporary transcription after final result
-            }
+            // Optionally update real-time transcription display
+            setTranscription((prev) => prev + " " + transcript);
           }
         }
       });
 
-
-      dgSocket.on("error", (error) => {
-        console.error("Deepgram WebSocket error:", error);
-      });
-
-      dgSocket.on("close", () => {
-        console.log("Deepgram WebSocket closed");
-      });
+      dgSocket.on(LiveTranscriptionEvents.Error, (error) =>
+        console.error("Deepgram WebSocket error:", error)
+      );
 
       setSocket(dgSocket);
 
-      // Initialize microphone
       const mic = await getMicrophone();
       setMicrophone(mic);
 
       mic.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          console.log("Sending audio chunk to Deepgram...");
-          dgSocket.send(e.data); // Send audio chunk to Deepgram WebSocket
-        } else {
-          console.warn("Received empty audio chunk");
-        }
+        if (e.data.size > 0) dgSocket.send(e.data);
       };
 
-      mic.onstart = () => {
-        console.log("Microphone started...");
-        setIsRecording(true);
-      };
+      mic.onstart = () => setIsRecording(true);
 
-      mic.onstop = () => {
-        console.log("Microphone stopped...");
+      mic.onstop = async () => {
+        console.log("Microphone stopped");
         setIsRecording(false);
-        dgSocket.requestClose();
 
+        const finalTranscript = tempTranscription.trim();
+        console.log("Final Transcript:", finalTranscript);
+
+        if (sessionType === "practice") {
+          await sendFeedbackRequest(finalTranscript);
+        } else {
+          if (currentPart === 1) {
+            setTestResponses((prev) => ({
+              ...prev,
+              part1: [...prev.part1, finalTranscript],
+            }));
+          } else if (currentPart === 2) {
+            setTestResponses((prev) => ({
+              ...prev,
+              part2: [...prev.part2, finalTranscript],
+            }));
+          } else if (currentPart === 3) {
+            setTestResponses((prev) => ({
+              ...prev,
+              part3: [...prev.part3, finalTranscript],
+            }));
+          }
+
+          // Increment currentPart up to 3
+          setCurrentPart((prevPart) => Math.min(prevPart + 1, 3));
+
+          if (currentPart === 3) {
+            dgSocket.requestClose();
+          }
+        } tempTranscription = ""; // Reset for the next recording
       };
 
-      mic.start(1000); // Send audio chunks every 1000ms
+      mic.start(500);
     } catch (error) {
       console.error("Error starting recording:", error);
     }
   };
 
+  // ===================================
+  // 5. Stop Recording
+  // ===================================
   const handleStopRecording = () => {
     if (microphone) {
-      console.log("Stopping recording...");
+      console.log("Stopping the microphone...");
       microphone.stop();
       setMicrophone(null);
     }
     if (socket) {
+      console.log("Closing previous WebSocket...");
       socket.requestClose();
       setSocket(null);
     }
+    // Socket closure after finalizing transcript is handled in mic.onstop()
   };
 
+  // ===================================
+  // 6. Clear everything
+  // ===================================
+  const handleClear = () => {
+    setTranscription("");
+    setFeedback(null);
+    setOriginal("");
+  };
+
+  // Render UI
   return (
     <div>
       <h2>{sessionType === "practice" ? "Practice Mode" : "Test Mode"}</h2>
-      {(sessionType === "practice") && (<SentenceReader setOriginal={setOriginal} />)}
+
+      {sessionType === "practice" && (
+        <div>
+          <p>You can display your practice sentence or use your SentenceReader here.</p>
+          <RandomiseQuest setOriginal={setOriginal} />
+        </div>
+      )}
+      {sessionType !== "practice" && (
+        <div>
+          <p>IELTSPracticeTest or other test instructions here.</p>
+          <IELTSPracticeTest /* setSection={setSection} */ />
+        </div>
+      )}
+
       <button onClick={onBack} style={buttonStyle}>
         Back to Selection
       </button>
@@ -172,43 +223,44 @@ const SessionComponent = ({ sessionType, onBack }) => {
         </div>
       </div>
 
-      <div style={{ marginTop: "20px" }}>
-        <h3>Feedback</h3>
-        <div style={transcriptionBoxStyle}>
-          {aiFeedback ? (
-            <>
-              {/* Display Scores */}
-              <div style={{ marginBottom: "20px" }}>
-                <h4>Scores</h4>
-                <p>Fluency: {aiFeedback.scores?.fluency || "N/A"}</p>
-                <p>Grammar: {aiFeedback.scores?.grammar || "N/A"}</p>
-                <p>Vocabulary: {aiFeedback.scores?.vocabulary || "N/A"}</p>
-                <p>Pronunciation: {aiFeedback.scores?.pronunciation || "N/A"}</p>
-              </div>
-
-              {/* Display Corrections */}
-              <div>
-                <h4>Corrections</h4>
-                {aiFeedback.suggestions[0]}
-                {aiFeedback.corrections?.map((correction, index) => (
-                  <div key={index} style={{ marginBottom: "10px" }}>
-                    {correction.AI?.split("\n").map((line, lineIndex) => (
-                      <React.Fragment key={lineIndex}>
-                        {line}
-                        <br />
-                      </React.Fragment>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            "IELTS examiner feedback appears here..."
-          )}
+      {sessionType === "practice" && (
+        <div style={{ marginTop: "20px" }}>
+          <h3>Feedback</h3>
+          <div style={transcriptionBoxStyle}>
+            {aiFeedback ? (
+              <>
+                {/* Scores */}
+                <div style={{ marginBottom: "20px" }}>
+                  <h4>Scores</h4>
+                  <p>Fluency: {aiFeedback.scores?.fluency || "N/A"}</p>
+                  <p>Grammar: {aiFeedback.scores?.grammar || "N/A"}</p>
+                  <p>Vocabulary: {aiFeedback.scores?.vocabulary || "N/A"}</p>
+                  <p>Pronunciation: {aiFeedback.scores?.pronunciation || "N/A"}</p>
+                </div>
+                {/* Corrections */}
+                <div>
+                  <h4>Corrections</h4>
+                  {aiFeedback.suggestions?.[0]}
+                  {aiFeedback.corrections?.map((correction, index) => (
+                    <div key={index} style={{ marginBottom: "10px" }}>
+                      {correction.AI?.split("\n").map((line, lineIndex) => (
+                        <React.Fragment key={lineIndex}>
+                          {line}
+                          <br />
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              "IELTS examiner feedback appears here..."
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-
+      {/* Recording Buttons */}
       <div style={{ marginTop: "20px" }}>
         {!isRecording ? (
           <button style={buttonStyle} onClick={handleStartRecording}>
@@ -219,7 +271,18 @@ const SessionComponent = ({ sessionType, onBack }) => {
             Stop Recording
           </button>
         )}
+
+        {/* For test mode, once we've recorded for parts 1,2,3 => show Submit */}
+        {sessionType !== "practice" && currentPart === 4 && (
+          <button style={buttonStyle} onClick={submitTestResponses}>
+            Submit Test
+          </button>
+        )}
       </div>
+
+      <button style={buttonStyle} onClick={handleClear}>
+        Clear
+      </button>
     </div>
   );
 };

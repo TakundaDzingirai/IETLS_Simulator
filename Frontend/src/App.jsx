@@ -1,6 +1,7 @@
 // Refactored React UI Setup for IELTS Speaking Test
 import React, { useState } from 'react';
 import SessionComponent from './Components/SessionComponent';
+import SessionType from './Components/SessionType';
 
 const App = () => {
   const [sessionType, setSessionType] = useState(null);
@@ -19,7 +20,7 @@ const App = () => {
           <button onClick={() => handleSessionSelection('test')} style={buttonStyle}>Test Mode</button>
         </div>
       ) : (
-        <SessionComponent sessionType={sessionType} onBack={() => setSessionType(null)} />
+        <SessionType sessionType={sessionType} onBack={() => setSessionType(null)} />
       )}
     </div>
   );
