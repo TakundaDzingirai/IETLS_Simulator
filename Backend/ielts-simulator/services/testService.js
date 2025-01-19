@@ -55,24 +55,24 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
     let pronunciationFeedback = '';
     console.log(`original: ${original}`)
     if (original) {
-      const prompt = `I tried to say: "${response}", but the intended sentence was: "${original}". Provide feedback on pronunciation differences and suggestions. Make it short, ignore punctuation, and focus on helping me pronounce each word correctly.`;
+      const prompt = `the read this sentence out loud: "${original}". but when spoke it sounded like:${response},Provide feedback if what i read is different from what i spoke,focus helping on helping me pronounce each word correctly.`;
 
       try {
         console.log("Trying to gemini Ai...");
         const result = await model.generateContent(prompt);
-      
+
         // Extract pronunciation feedback
         const candidates = result.response?.candidates || [];
         if (candidates.length > 0) {
           pronunciationFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
         }
-      
+
         console.log(`feedbackObject: ${JSON.stringify(result.response, null, 2)}`);
         console.log(`pronunciationFeedback: ${pronunciationFeedback}`);
       } catch (error) {
         console.warn('Generative AI failed to provide pronunciation feedback:', error.message);
       }
-      
+
     }
 
     // Step 3: Scoring logic based on tokens
@@ -82,124 +82,107 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
     const corrections = [];
 
     async function calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData = {}) {
-        const fillerWords = ['um', 'uh', 'like', 'you know', 'sort of'];
-        const fillerCount = tokens.filter(token => fillerWords.includes(token.text.toLowerCase())).length;
-      
-        const avgSentenceLength = wordCount / sentenceCount || 1;
-        const sentenceVariety = sentenceCount > 1 ? 1 : 0.5; // Boost fluency if multiple sentences are present
-      
-        // Timing metrics
-        const { totalDuration, pauseDurations = [] } = timingData;
-        const speechRate = totalDuration ? wordCount / (totalDuration / 60) : 0; // Words per minute
-        const avgPauseDuration = pauseDurations.length ? pauseDurations.reduce((a, b) => a + b, 0) / pauseDurations.length : 0;
-        const pausePenalty = avgPauseDuration > 2 ? 1 : 0; // Penalize for long pauses (>2 seconds)
-      
-        // Calculate baseline fluency
-        let fluencyScore = 7; // Start with a baseline
-        fluencyScore += Math.min(avgSentenceLength / 10, 2); // Reward longer sentences up to a cap
-        fluencyScore -= fillerCount * 0.5; // Penalize fillers
-        fluencyScore += sentenceVariety; // Reward variety
-        fluencyScore -= pausePenalty; // Penalize long pauses
-        fluencyScore += speechRate > 100 && speechRate < 160 ? 1 : -1; // Reward optimal speech rate (100-160 WPM)
-      
-        // Send a prompt to Generative AI for additional fluency feedback
-        try {
-            const prompt = `Analyze the following response for fluency:\n"${response}"\n\nFocus only on providing the following:
+      const fillerWords = ['um', 'uh', 'like', 'you know', 'sort of'];
+      const fillerCount = tokens.filter(token => fillerWords.includes(token.text.toLowerCase())).length;
 
-            1. A **Fluency Score** on a scale of 0-9 (e.g., "Fluency Score: 7/9").
-            2. Short and actionable **Suggestions to Improve Fluency**, covering:
-            
-               - **Grammar**: Highlight any major sentence structure issues and how to correct them.
-               - **Vocabulary**: Mention imprecise or unclear words and suggest better alternatives.
-               - **Pronunciation**: Provide specific feedback on unclear words and suggest improvements.
-               - **Practice Tips**: Offer brief advice to improve fluency and rhythm.
-            
-            Keep the response concise and structured like this:
-            
-            **Fluency Score:** X/9
-            
-            **Suggestions to Improve Fluency:**
-            * Grammar: ...
-            * Vocabulary: ...
-            * Pronunciation: ...
-            * Practice Tips: ...`;
-            
-          console.log("Sending prompt to Generative AI for fluency analysis...");
-          const result = await model.generateContent(prompt);
-          const candidates = result.response?.candidates || [];
-          const fluencyFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
-          console.log(`fluencyFeedback: ${fluencyFeedback}`);
-          corrections.push(`AI: ${fluencyFeedback}`)
-      
-          // Parse the AI's score and feedback
-          const matchScore = fluencyFeedback.match(/Fluency score: (\d+(\.\d+)?)/i);
-          const aiFluencyScore = matchScore ? parseFloat(matchScore[1]) : null;
-      
-          if (aiFluencyScore !== null) {
-            fluencyScore = (fluencyScore + aiFluencyScore) / 2; // Combine AI score with logic-based score
-          }
-      
-        //   console.log("AI Fluency Feedback:", fluencyFeedback);
-        } catch (error) {
-          console.warn('Generative AI failed to provide fluency feedback:', error.message);
+      const avgSentenceLength = wordCount / sentenceCount || 1;
+      const sentenceVariety = sentenceCount > 1 ? 1 : 0.5; // Boost fluency if multiple sentences are present
+
+      // Timing metrics
+      const { totalDuration, pauseDurations = [] } = timingData;
+      const speechRate = totalDuration ? wordCount / (totalDuration / 60) : 0; // Words per minute
+      const avgPauseDuration = pauseDurations.length ? pauseDurations.reduce((a, b) => a + b, 0) / pauseDurations.length : 0;
+      const pausePenalty = avgPauseDuration > 2 ? 1 : 0; // Penalize for long pauses (>2 seconds)
+
+      // Calculate baseline fluency
+      let fluencyScore = 7; // Start with a baseline
+      fluencyScore += Math.min(avgSentenceLength / 10, 2); // Reward longer sentences up to a cap
+      fluencyScore -= fillerCount * 0.5; // Penalize fillers
+      fluencyScore += sentenceVariety; // Reward variety
+      fluencyScore -= pausePenalty; // Penalize long pauses
+      fluencyScore += speechRate > 100 && speechRate < 160 ? 1 : -1; // Reward optimal speech rate (100-160 WPM)
+
+      // Send a prompt to Generative AI for additional fluency feedback
+      try {
+        const prompt = `Compare my spoken response with the intended (correct) sentence:
+- **Spoken Response**: "${response}"
+- **Intended Sentence**: "${original}"
+
+Please analyze the following aspects:
+
+1. **Grammar Accuracy**: Identify any grammatical errors or structural deviations in my spoken response compared to the intended sentence.
+2. **Vocabulary Match**: Highlight words in my spoken response that differ from the intended sentence and suggest more accurate alternatives where applicable.
+3. **Fluency Suggestions**: Provide actionable tips to improve clarity, pace, and natural rhythm in my speech.
+4. **Fluency Score**: Assign a score between 0 and 9 (e.g., 7) to evaluate overall fluency.
+Ensure the feedback is concise, clear, and easy to implement.`;
+
+        console.log("Sending prompt to Generative AI for fluency analysis...");
+        const result = await model.generateContent(prompt);
+        const candidates = result.response?.candidates || [];
+        const fluencyFeedback = candidates[0]?.content?.parts?.[0]?.text?.trim() || '';
+        console.log(`fluencyFeedback: ${fluencyFeedback}`);
+
+
+        // Parse the AI's score and feedback
+        const matchScore = fluencyFeedback.match(/Fluency score: (\d+(\.\d+)?)/i);
+        const aiFluencyScore = matchScore ? parseFloat(matchScore[1]) : null;
+
+        if (aiFluencyScore !== null) {
+          fluencyScore = (fluencyScore + aiFluencyScore) / 2; // Combine AI score with logic-based score
         }
-      
-        return Math.max(0, Math.min(fluencyScore, 9)); // Ensure the score stays between 0 and 9
-      }
-      
+        const cleanedFluencyFeedback = fluencyFeedback.replace(/Fluency score: \d+(\.\d+)?/i, "").trim();
 
-      const scores = {
-        fluency: await calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData), // Updated fluency logic
-        grammar: 8 - (tokens.filter(t => t.partOfSpeech === 'X').length / wordCount) * 8, // Penalize unclassified words
-        vocabulary: 6 + (tokens.filter(t => ['ADJ', 'ADV'].includes(t.partOfSpeech)).length / wordCount) * 3, // Reward descriptive words
-        pronunciation: pronunciationFeedback ? 7.5 : 7, // Adjust based on Generative AI feedback
-      };
-      
+        // Push the cleaned feedback into the corrections array
+        corrections.push({ AI: cleanedFluencyFeedback });
+
+        //   console.log("AI Fluency Feedback:", fluencyFeedback);
+      } catch (error) {
+        console.warn('Generative AI failed to provide fluency feedback:', error.message);
+      }
+
+      return Math.max(0, Math.min(fluencyScore, 9)); // Ensure the score stays between 0 and 9
+    }
+
+
+    const scores = {
+      fluency: await calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData), // Updated fluency logic
+      grammar: 9 - (tokens.filter(t => t.partOfSpeech === 'X').length / wordCount) * 8, // Penalize unclassified words
+      vocabulary: 6 + (tokens.filter(t => ['ADJ', 'ADV'].includes(t.partOfSpeech)).length / wordCount) * 3, // Reward descriptive words
+      pronunciation: pronunciationFeedback ? 7.5 : 7, // Adjust based on Generative AI feedback
+    };
+
 
     // Generate feedback and corrections
     const feedbackMessages = [];
-    
 
+    let tokenFeedback = ""
     tokens.forEach((token, index) => {
       const nextToken = tokens[index + 1];
 
       // Check for incorrect pronouns
       if (token.partOfSpeech === 'PRON' && token.text.toLowerCase() === 'them') {
-        corrections.push(`The pronoun "${token.text}" seems incorrect here. Consider using "their" or another appropriate pronoun.`);
+        // corrections.push(`The pronoun "${token.text}" seems incorrect here. Consider using "their" or another appropriate pronoun.`);
+        tokenFeedback += `The pronoun "${token.text}" seems incorrect here. Consider using "their" or another appropriate pronoun.\n`
       }
 
       // Check for awkward prepositional phrases
       if (token.partOfSpeech === 'ADP' && nextToken && nextToken.partOfSpeech === 'DET' && nextToken.text.toLowerCase() === 'the') {
-        corrections.push(`The phrase "${token.text} ${nextToken.text}" seems awkward. Consider revising.`);
+        tokenFeedback += `The phrase "${token.text} ${nextToken.text}" seems awkward. Consider revising.\n`;
       }
 
       // Identify unclassified or unclear words
       if (token.partOfSpeech === 'X') {
-        corrections.push(`The word "${token.text}" might be incorrect or unclear.`);
+        tokenFeedback += `The word "${token.text}" might be incorrect or unclear.\n`;
       }
     });
+    if (tokenFeedback) {
+      corrections.push({ Tokens: tokenFeedback });
+    }
 
-    // if (scores.fluency < 6) {
-    //   feedbackMessages.push('Try to use longer, more complex sentences to improve fluency.');
-    // } else {
-    //   feedbackMessages.push('Your fluency is strong; continue practicing to maintain this level.');
-    // }
-
-    // if (scores.grammar < 7) {
-    //   feedbackMessages.push('Focus on correcting subject-verb agreement and avoiding sentence fragments.');
-    // } else {
-    //   feedbackMessages.push('Your grammar usage is good, with few noticeable errors.');
-    // }
-
-    // if (scores.vocabulary < 7) {
-    //   feedbackMessages.push('Incorporate more descriptive words, such as adjectives and adverbs, to enhance your response.');
-    // } else {
-    //   feedbackMessages.push('You used a good range of vocabulary. Keep exploring topic-specific terms.');
-    // }
 
     if (pronunciationFeedback) {
       feedbackMessages.push(`Pronunciation feedback: ${pronunciationFeedback}`);
-    } 
+    }
     return {
       feedback: 'Text analyzed successfully with Google Natural Language API and Generative AI.',
       analysis: {
