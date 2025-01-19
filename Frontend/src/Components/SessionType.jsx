@@ -15,7 +15,10 @@ const SessionType = ({ sessionType, onBack }) => {
         part3: [],
     });
 
-    const recognitionRef = useRef(null); // Reference to the SpeechRecognition instance
+    const recognitionRef = useRef(null);
+    const timeoutRef = useRef(null); // Reference for pause detection
+    const lastWordTimeRef = useRef(null); // Track the last word's timestamp
+    const startTimeRef = useRef(null); // Reference for tracking start time
 
     // Send transcription to backend for feedback
     const sendFeedbackRequest = async (finalTranscript) => {
@@ -25,10 +28,9 @@ const SessionType = ({ sessionType, onBack }) => {
                 {
                     response: finalTranscript,
                     original: original || "n/a",
-                    timingData: {},
+                    timingData: { duration: getDuration() }, // Include fluency duration
                 }
             );
-            console.log(response.data.feedback);
             setFeedback(response.data.feedback);
         } catch (error) {
             console.error("Error sending transcription to backend:", error);
@@ -36,12 +38,16 @@ const SessionType = ({ sessionType, onBack }) => {
         }
     };
 
-    // Submit test responses
+    const getDuration = () => {
+        const endTime = new Date();
+        return startTimeRef.current ? (endTime - startTimeRef.current) / 1000 : 0; // Duration in seconds
+    };
+
     const submitTestResponses = async () => {
         try {
             const response = await axios.post("http://localhost:5000/api/test/submit", {
                 responses: testResponses,
-                timingData: {},
+                timingData: {}, // Add any timing data if needed
             });
             console.log("Test feedback received:", response.data.feedback);
         } catch (error) {
@@ -50,7 +56,6 @@ const SessionType = ({ sessionType, onBack }) => {
         }
     };
 
-    // Start recording using SpeechRecognition API
     const handleStartRecording = () => {
         const SpeechRecognition =
             window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -61,7 +66,6 @@ const SessionType = ({ sessionType, onBack }) => {
         }
 
         if (recognitionRef.current) {
-            console.warn("Recognition instance already exists. Stopping it first...");
             recognitionRef.current.stop();
             recognitionRef.current = null;
         }
@@ -71,6 +75,9 @@ const SessionType = ({ sessionType, onBack }) => {
         recognition.interimResults = true;
         recognition.lang = "en-US";
 
+        startTimeRef.current = new Date();
+        lastWordTimeRef.current = new Date();
+
         recognition.onstart = () => {
             setIsRecording(true);
             setTranscription("");
@@ -78,15 +85,47 @@ const SessionType = ({ sessionType, onBack }) => {
         };
 
         recognition.onresult = (event) => {
-            const transcript = Array.from(event.results)
-                .map((result) => result[0].transcript)
-                .join(" ");
-            setTranscription(transcript);
+            // Grab only the newest result
+            const lastResult = event.results[event.results.length - 1];
+            const transcript = lastResult[0].transcript.trim();
+
+            // If you're also using interim results, you could handle them here:
+            // if (!lastResult.isFinal) {
+            //   // Show partial transcription in some "interim" state, if desired
+            //   return;
+            // }
+
+            if (lastResult.isFinal) {
+                console.log("infinal state");
+                clearTimeout(timeoutRef.current);
+
+                const now = new Date();
+                const timeDiff = (now - lastWordTimeRef.current) / 1000;
+
+                // Simple pause-based punctuation
+                const punctuation =
+                    timeDiff > 1.5 ? "." : timeDiff > 0.8 ? "," : "";
+
+                // Append only the new final chunk (no duplication from older results)
+                setTranscription((prev) => `${prev.trim()}${punctuation} ${transcript}`);
+                lastWordTimeRef.current = now;
+            }
+
+            // Optional: handle the punctuation on a timeout if the user pauses
+            timeoutRef.current = setTimeout(() => {
+                const now = new Date();
+                const timeDiff = (now - lastWordTimeRef.current) / 1000;
+                if (timeDiff > 1.5) {
+                    setTranscription((prev) => `${prev.trim()}. `);
+                    lastWordTimeRef.current = now;
+                }
+            }, 1500);
         };
 
         recognition.onend = () => {
             console.log("Recording stopped.");
             setIsRecording(false);
+            clearTimeout(timeoutRef.current);
         };
 
         recognition.onerror = (event) => {
@@ -95,14 +134,13 @@ const SessionType = ({ sessionType, onBack }) => {
         };
 
         recognition.start();
-        recognitionRef.current = recognition; // Store the instance in the ref
+        recognitionRef.current = recognition;
     };
 
-    // Stop recording and turn off mic
     const handleStopRecording = () => {
         if (recognitionRef.current) {
             recognitionRef.current.stop();
-            recognitionRef.current = null; // Clear the reference
+            recognitionRef.current = null;
         }
 
         if (sessionType === "practice") {
@@ -125,7 +163,6 @@ const SessionType = ({ sessionType, onBack }) => {
         setIsRecording(false);
     };
 
-    // Clear transcription and feedback
     const handleClear = () => {
         setTranscription("");
         setFeedback(null);
