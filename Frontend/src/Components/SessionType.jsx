@@ -2,7 +2,7 @@ import React, { useState, useRef } from "react";
 import axios from "axios";
 import IELTSPracticeTest from "./IELTSPracticeTest";
 import RandomiseQuest from "./RandomiseQuest";
-
+import FeedbackDisplay from "./FeedbackDisplay";
 const SessionType = ({ sessionType, onBack }) => {
     const [isRecording, setIsRecording] = useState(false);
     const [transcription, setTranscription] = useState("");
@@ -14,6 +14,7 @@ const SessionType = ({ sessionType, onBack }) => {
         part2: [],
         part3: [],
     });
+    const [testFeedback, setTestFeedback] = useState(null);
 
     const recognitionRef = useRef(null);
     const timeoutRef = useRef(null);
@@ -59,6 +60,7 @@ const SessionType = ({ sessionType, onBack }) => {
                 timingData: {}, // pass data if needed
             });
             console.log("Test feedback received:", response.data.feedback);
+            setTestFeedback(response.data.feedback);
         } catch (error) {
             console.error("Error submitting test:", error);
             setFeedback("Failed to submit test. Please try again.");
@@ -207,10 +209,11 @@ const SessionType = ({ sessionType, onBack }) => {
                     <IELTSPracticeTest setOriginal={setOriginal} />
                 </div>
             )}
+            {testFeedback && (
+                <FeedbackDisplay feedback={testFeedback} />
+            )}
 
-            <button onClick={onBack} style={buttonStyle}>
-                Back to Selection
-            </button>
+
 
             <div style={{ marginTop: "20px" }}>
                 <h3>Real-Time Transcription</h3>
@@ -278,6 +281,9 @@ const SessionType = ({ sessionType, onBack }) => {
 
             <button style={buttonStyle} onClick={handleClear}>
                 Clear
+            </button>
+            <button onClick={onBack} style={buttonStyle}>
+                Back to Selection
             </button>
         </div>
     );
