@@ -166,7 +166,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
         1. Grammar Accuracy
         2. Vocabulary Match
         3. Fluency Suggestions
-        4. Fluency Score: (0-9) (e.g 7)
+        4. Fluency Score: (0-9) (e.g Fluency Score: 9)
       `;
 
       try {
@@ -177,8 +177,17 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
         console.log(`fluencyFeedback: ${fluencyFeedback}`);
 
         // Attempt to parse an "AI-derived" fluency score from the text
-        const matchScore = fluencyFeedback.match(/Fluency score:\s*(\d+(\.\d+)?)/i);
+        // 1. Remove asterisks so that "Fluency Score:" can be matched
+        const cleanedFeedback = fluencyFeedback.replace(/\*/g, "");
+
+        // 2. Capture a number (including optional decimal part) after "Fluency Score:"
+        const matchScore = cleanedFeedback.match(/Fluency Score:\s*(\d+(\.\d+)?)/i);
+
+        // 3. Convert the captured string into a float
         const aiFluencyScore = matchScore ? parseFloat(matchScore[1]) : null;
+
+        // Now aiFluencyScore is a JavaScript number (e.g., 2, 3.5, etc.)
+
         console.log(aiFluencyScore);
         console.log(fluencyScore);
 
