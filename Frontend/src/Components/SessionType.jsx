@@ -21,6 +21,9 @@ const SessionType = ({ sessionType, onBack }) => {
     });
     const [testFeedback, setTestFeedback] = useState(null);
 
+    // NEW: loading state for request
+    const [isLoading, setIsLoading] = useState(false);
+
     const recognitionRef = useRef(null);
     const timeoutRef = useRef(null);
     const lastWordTimeRef = useRef(null);
@@ -47,6 +50,7 @@ const SessionType = ({ sessionType, onBack }) => {
     // For "practice" mode: send final transcript to backend
     const sendFeedbackRequest = async (completeTranscript) => {
         try {
+            setIsLoading(true); // <--- Show "loading" state
             const response = await axios.post(
                 "http://localhost:5000/api/practice/feedback",
                 {
@@ -64,13 +68,16 @@ const SessionType = ({ sessionType, onBack }) => {
         } catch (error) {
             console.error("Error sending transcription to backend:", error);
             setFeedback("Failed to retrieve feedback. Please try again.");
+        } finally {
+            setIsLoading(false); // <--- Hide "loading" state
         }
     };
 
     // For "test" mode: submit all parts
     const submitTestResponses = async () => {
-        console.log(testResponses);
         try {
+            setIsLoading(true); // <--- Show "loading" state
+            console.log(testResponses);
             const response = await axios.post("http://localhost:5000/api/test/submit", {
                 responses: testResponses,
                 timingData: {}, // pass data if needed
@@ -80,6 +87,8 @@ const SessionType = ({ sessionType, onBack }) => {
         } catch (error) {
             console.error("Error submitting test:", error);
             setFeedback("Failed to submit test. Please try again.");
+        } finally {
+            setIsLoading(false); // <--- Hide "loading" state
         }
     };
 
@@ -271,6 +280,16 @@ const SessionType = ({ sessionType, onBack }) => {
                     {combinedTranscript || "Transcription will appear here..."}
                 </div>
             </div>
+
+            {/* 
+        Show the "loading" status if we are waiting for feedback 
+        after the user stops recording (or test submission).
+      */}
+            {isLoading && (
+                <div style={{ color: "blue", marginTop: "10px" }}>
+                    Processing your request...
+                </div>
+            )}
 
             {sessionType === "practice" && (
                 <div style={{ marginTop: "20px" }}>
