@@ -52,6 +52,7 @@ const SessionType = ({ sessionType, onBack }) => {
     };
 
     const submitTestResponses = async () => {
+        console.log(testResponses)
         try {
             const response = await axios.post("http://localhost:5000/api/test/submit", {
                 responses: testResponses,
@@ -154,31 +155,36 @@ const SessionType = ({ sessionType, onBack }) => {
             recognitionRef.current = null;
         }
 
-        // If in practice mode, send final transcript + timing
         if (sessionType === "practice") {
             sendFeedbackRequest(transcription);
         } else {
+            // For test mode
             const updateTestResponse = (part) => {
                 setTestResponses((prev) => ({
                     ...prev,
-                    [part]: [...prev[part], transcription,original],
+                    [part]: [
+                        ...prev[part],        // keep any existing objects in that part
+                        {
+                            response: transcription,  // the user’s spoken answer
+                            questions: original       // the full question text
+                        }
+                    ],
                 }));
             };
 
-            if (currentPart === 1) updateTestResponse("part1");
-            else if (currentPart === 2) updateTestResponse("part2");
-            else if (currentPart === 3) {
+            if (currentPart === 1) {
+                updateTestResponse("part1");
+            } else if (currentPart === 2) {
+                updateTestResponse("part2");
+            } else if (currentPart === 3) {
                 updateTestResponse("part3");
-
             }
 
             setCurrentPart((prevPart) => Math.min(prevPart + 1, 4));
-
         }
 
         setIsRecording(false);
     };
-
     const handleClear = () => {
         setTranscription("");
         setFeedback(null);

@@ -19,6 +19,27 @@ const IELTSPracticeTest = ({ setOriginal }) => {
     fetchTestQuestions();
   }, []);
 
+  // Update `original` when `currentPart` changes
+  useEffect(() => {
+    if (testQuestions) {
+      let allQuestions = "";
+      switch (currentPart) {
+        case 1:
+          allQuestions = testQuestions.part1.join(" ");
+          break;
+        case 2:
+          allQuestions = `${testQuestions.part2.topic}. ${testQuestions.part2.prompts.join(" ")}`;
+          break;
+        case 3:
+          allQuestions = testQuestions.part3.join(" ");
+          break;
+        default:
+          allQuestions = "";
+      }
+      setOriginal(allQuestions);
+    }
+  }, [currentPart, testQuestions, setOriginal]);
+
   // Function to render the current part
   const renderCurrentPart = () => {
     if (!testQuestions) {
@@ -42,10 +63,12 @@ const IELTSPracticeTest = ({ setOriginal }) => {
         return (
           <div>
             <h3>Part 2: Cue Card</h3>
-            <p><strong>{testQuestions.part2.topic}</strong></p> {/* Display the topic */}
+            <p>
+              <strong>{testQuestions.part2.topic}</strong>
+            </p>
             <ul>
               {testQuestions.part2.prompts.map((prompt, index) => (
-                <li key={index}>{prompt}</li> // Display each prompt
+                <li key={index}>{prompt}</li>
               ))}
             </ul>
             <button onClick={() => setCurrentPart(3)}>Next: Two-Way Discussion</button>
