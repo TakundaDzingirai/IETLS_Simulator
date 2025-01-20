@@ -85,10 +85,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
       tokens,
       wordCount,
       sentenceCount,
-      response,
-      original,
-      timingData = {},
-  
+
     ) {
       // 1. Define expanded filler words, repeated-phrase detection, etc.
       const fillerWords = ["um", "uh", "like", "you know", "sort of", "actually", "basically", "so..."];
@@ -169,7 +166,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
         1. Grammar Accuracy
         2. Vocabulary Match
         3. Fluency Suggestions
-        4. Fluency Score (0-9)
+        4. Fluency Score: (0-9) (e.g 7)
       `;
 
       try {
@@ -182,6 +179,8 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
         // Attempt to parse an "AI-derived" fluency score from the text
         const matchScore = fluencyFeedback.match(/Fluency score:\s*(\d+(\.\d+)?)/i);
         const aiFluencyScore = matchScore ? parseFloat(matchScore[1]) : null;
+        console.log(aiFluencyScore);
+        console.log(fluencyScore);
 
         if (aiFluencyScore !== null) {
           // Blend logic-based score with AI-based score
@@ -202,7 +201,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
 
 
     const scores = {
-      fluency: await calculateEnhancedFluency(tokens, wordCount, sentenceCount, response, timingData), // Updated fluency logic
+      fluency: await calculateEnhancedFluency(tokens, wordCount, sentenceCount), // Updated fluency logic
       grammar: 9 - (tokens.filter(t => t.partOfSpeech === 'X').length / wordCount) * 8, // Penalize unclassified words
       vocabulary: 6 + (tokens.filter(t => ['ADJ', 'ADV'].includes(t.partOfSpeech)).length / wordCount) * 3, // Reward descriptive words
       pronunciation: pronunciationFeedback ? 7.5 : 7, // Adjust based on Generative AI feedback
@@ -232,7 +231,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
         tokenFeedback += `The word "${token.text}" might be incorrect or unclear.\n`;
       }
     });
- 
+
 
 
     if (pronunciationFeedback) {
