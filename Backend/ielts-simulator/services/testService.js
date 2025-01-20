@@ -53,7 +53,7 @@ async function generateTestPartFeedback(part, response, original = '', timingDat
 
     // Step 2: Use Generative AI for pronunciation feedback
     let pronunciationFeedback = '';
-    console.log(`original: ${original}`)
+    
     if (original) {
       const prompt = `the read this sentence out loud: "${original}". but when spoke it sounded like:${response},Provide feedback if what i read is different from what i spoke,focus helping on helping me pronounce each word correctly.`;
 

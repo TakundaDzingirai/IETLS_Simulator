@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const speechRoutes = require('./routes/speech');
+const speechRoutes = require('./routes/punctuate');
 const testRoutes = require('./routes/test');
 const practiceRoutes = require('./routes/practice');
 
@@ -22,7 +22,7 @@ app.use((req, res, next) => {
 });
 
 // API Routes
-app.use('/api/speech', speechRoutes);
+app.use('/api/punctuate', speechRoutes);
 app.use('/api/test', testRoutes);
 app.use('/api/practice', practiceRoutes);
 

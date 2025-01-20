@@ -3,9 +3,14 @@ import axios from "axios";
 import IELTSPracticeTest from "./IELTSPracticeTest";
 import RandomiseQuest from "./RandomiseQuest";
 import FeedbackDisplay from "./FeedbackDisplay";
+
 const SessionType = ({ sessionType, onBack }) => {
     const [isRecording, setIsRecording] = useState(false);
-    const [transcription, setTranscription] = useState("");
+
+    // NEW: separate final vs. interim transcripts
+    const [finalTranscript, setFinalTranscript] = useState("");
+    const [interimTranscript, setInterimTranscript] = useState("");
+
     const [aiFeedback, setFeedback] = useState(null);
     const [original, setOriginal] = useState("");
     const [currentPart, setCurrentPart] = useState(1);
@@ -21,21 +26,36 @@ const SessionType = ({ sessionType, onBack }) => {
     const lastWordTimeRef = useRef(null);
     const startTimeRef = useRef(null);
 
-    // *** NEW: Track total paused time
+    // Track total paused time
     const pauseTimeRef = useRef(0);
 
-    // Send transcription to backend for feedback
-    const sendFeedbackRequest = async (finalTranscript) => {
+    // Combine final + interim for on-screen display
+    const combinedTranscript = (finalTranscript + " " + interimTranscript).trim();
+
+    // ------------------------------------------
+    //  HELPERS
+    // ------------------------------------------
+
+    // Duration in seconds from startTimeRef
+    const getDuration = () => {
+        const endTime = new Date();
+        return startTimeRef.current
+            ? (endTime - startTimeRef.current) / 1000
+            : 0;
+    };
+
+    // For "practice" mode: send final transcript to backend
+    const sendFeedbackRequest = async (completeTranscript) => {
         try {
             const response = await axios.post(
                 "http://localhost:5000/api/practice/feedback",
                 {
-                    response: finalTranscript,
+                    response: completeTranscript,
                     original: original || "n/a",
                     // Pass both total duration and total paused time
                     timingData: {
                         duration: getDuration(),
-                        pauseDuration: pauseTimeRef.current
+                        pauseDuration: pauseTimeRef.current,
                     },
                 }
             );
@@ -47,13 +67,9 @@ const SessionType = ({ sessionType, onBack }) => {
         }
     };
 
-    const getDuration = () => {
-        const endTime = new Date();
-        return startTimeRef.current ? (endTime - startTimeRef.current) / 1000 : 0; // Duration in seconds
-    };
-
+    // For "test" mode: submit all parts
     const submitTestResponses = async () => {
-        console.log(testResponses)
+        console.log(testResponses);
         try {
             const response = await axios.post("http://localhost:5000/api/test/submit", {
                 responses: testResponses,
@@ -67,6 +83,9 @@ const SessionType = ({ sessionType, onBack }) => {
         }
     };
 
+    // ------------------------------------------
+    //  RECORDING
+    // ------------------------------------------
     const handleStartRecording = () => {
         const SpeechRecognition =
             window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -90,47 +109,69 @@ const SessionType = ({ sessionType, onBack }) => {
         // Start timers
         startTimeRef.current = new Date();
         lastWordTimeRef.current = new Date();
-
-        // *** NEW: reset paused time at start
         pauseTimeRef.current = 0;
 
         recognition.onstart = () => {
             setIsRecording(true);
-            setTranscription("");
+            setFinalTranscript("");
+            setInterimTranscript("");
+            setFeedback(null);
             console.log("Recording started...");
         };
 
         recognition.onresult = (event) => {
-            // Grab only the newest result
-            const lastResult = event.results[event.results.length - 1];
-            const transcript = lastResult[0].transcript.trim();
+            // We'll accumulate interim text here
+            let newInterim = "";
 
-            if (lastResult.isFinal) {
-                console.log("infinal state");
-                clearTimeout(timeoutRef.current);
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                const recognizedText = result[0].transcript.trim();
 
-                const now = new Date();
-                const timeDiff = (now - lastWordTimeRef.current) / 1000;
+                if (result.isFinal) {
+                    // The chunk is final => punctuation + add to finalTranscript
+                    clearTimeout(timeoutRef.current);
 
-                // Simple pause-based punctuation
-                const punctuation =
-                    timeDiff > 1.5 ? "." : timeDiff > 0.8 ? "," : "";
+                    const now = new Date();
+                    const timeDiff = (now - lastWordTimeRef.current) / 1000;
 
-                // Append only the new final chunk
-                setTranscription((prev) => `${prev.trim()}${punctuation} ${transcript}`);
-                lastWordTimeRef.current = now;
+                    // Punctuation logic based on silence length
+                    const punctuation =
+                        timeDiff > 1.5
+                            ? "."
+                            : timeDiff > 0.8
+                                ? ","
+                                : "";
+
+                    // Add final text to finalTranscript, plus punctuation
+                    setFinalTranscript((prev) =>
+                        (prev.trim() + punctuation + " " + recognizedText).trim()
+                    );
+
+                    // Update lastWordTimeRef
+                    lastWordTimeRef.current = now;
+
+                    // Also, after final result, we can reset the interim
+                    // so it doesn't duplicate in the combined output
+                    setInterimTranscript("");
+                } else {
+                    // It's still interim => accumulate in newInterim
+                    newInterim += recognizedText + " ";
+                }
             }
 
-            // Handle the punctuation on a timeout if user goes silent for 1.5s
+            // If there's any non-final text, put it in state
+            if (newInterim.length > 0) {
+                setInterimTranscript(newInterim.trim());
+            }
+
+            // If there's a silence of 1.5s => add a period + track pause time
+            clearTimeout(timeoutRef.current);
             timeoutRef.current = setTimeout(() => {
                 const now = new Date();
                 const timeDiff = (now - lastWordTimeRef.current) / 1000;
-
                 if (timeDiff > 1.5) {
-                    // *** NEW: add to paused time
                     pauseTimeRef.current += timeDiff;
-
-                    setTranscription((prev) => `${prev.trim()}. `);
+                    setFinalTranscript((prev) => (prev.trim() + ". ").trim());
                     lastWordTimeRef.current = now;
                 }
             }, 1500);
@@ -156,20 +197,24 @@ const SessionType = ({ sessionType, onBack }) => {
             recognitionRef.current.stop();
             recognitionRef.current = null;
         }
+        setIsRecording(false);
+
+        // Combine final + interim for "complete" text
+        const completeTranscript = (finalTranscript + " " + interimTranscript).trim();
 
         if (sessionType === "practice") {
-            sendFeedbackRequest(transcription);
+            sendFeedbackRequest(completeTranscript);
         } else {
             // For test mode
             const updateTestResponse = (part) => {
                 setTestResponses((prev) => ({
                     ...prev,
                     [part]: [
-                        ...prev[part],        // keep any existing objects in that part
+                        ...prev[part],
                         {
-                            response: transcription,  // the user’s spoken answer
-                            questions: original       // the full question text
-                        }
+                            response: completeTranscript,
+                            questions: original,
+                        },
                     ],
                 }));
             };
@@ -184,15 +229,22 @@ const SessionType = ({ sessionType, onBack }) => {
 
             setCurrentPart((prevPart) => Math.min(prevPart + 1, 4));
         }
-
-        setIsRecording(false);
     };
+
     const handleClear = () => {
-        setTranscription("");
+        setFinalTranscript("");
+        setInterimTranscript("");
         setFeedback(null);
         setOriginal("");
+        // Optionally reset times:
+        pauseTimeRef.current = 0;
+        lastWordTimeRef.current = null;
+        startTimeRef.current = null;
     };
 
+    // ------------------------------------------
+    //  RENDER
+    // ------------------------------------------
     return (
         <div>
             <h2>{sessionType === "practice" ? "Practice Mode" : "Test Mode"}</h2>
@@ -203,22 +255,20 @@ const SessionType = ({ sessionType, onBack }) => {
                     <RandomiseQuest setOriginal={setOriginal} />
                 </div>
             )}
+
             {sessionType !== "practice" && (
                 <div>
                     <p>IELTSPracticeTest or other test instructions here.</p>
                     <IELTSPracticeTest setOriginal={setOriginal} />
                 </div>
             )}
-            {testFeedback && (
-                <FeedbackDisplay feedback={testFeedback} />
-            )}
 
-
+            {testFeedback && <FeedbackDisplay feedback={testFeedback} />}
 
             <div style={{ marginTop: "20px" }}>
                 <h3>Real-Time Transcription</h3>
                 <div style={transcriptionBoxStyle}>
-                    {transcription || "Transcription will appear here..."}
+                    {combinedTranscript || "Transcription will appear here..."}
                 </div>
             </div>
 
@@ -271,7 +321,7 @@ const SessionType = ({ sessionType, onBack }) => {
                     </button>
                 )}
 
-                {/* For test mode, once we've recorded for parts 1,2,3 => show Submit */}
+                {/* For test mode, once we've recorded for parts 1, 2, 3 => show Submit */}
                 {sessionType !== "practice" && currentPart === 4 && (
                     <button style={buttonStyle} onClick={submitTestResponses}>
                         Submit Test
